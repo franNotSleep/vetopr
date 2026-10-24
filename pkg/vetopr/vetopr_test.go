@@ -17,7 +17,7 @@ var (
 	testPRPath            string
 )
 
-func findFirstUnzipped() (string, error) {
+func getPR() (string, error) {
 	var findErr error = nil
 	findFirstUnzippedOnce.Do(func() {
 		entries, err := os.ReadDir(SNAPSHOTS_PATH)
@@ -36,8 +36,18 @@ func findFirstUnzipped() (string, error) {
 	return testPRPath, findErr
 }
 
+func getServiceCfg(service string, vetoPrConfig VetoprConfig) (ServiceConfig, error) {
+	var zero ServiceConfig
+	srvCfg, ok := vetoPrConfig.Services[service]
+	if !ok {
+		return zero, fmt.Errorf("Service %s is not a key on Config", service)
+	}
+
+	return srvCfg, nil
+}
+
 func TestReadConfig(t *testing.T) {
-	prPath, err := findFirstUnzipped()
+	prPath, err := getPR()
 	if err != nil {
 		t.Error(err)
 		return
@@ -61,13 +71,44 @@ func TestReadConfig(t *testing.T) {
 		return
 	}
 
-	if srvCfg.Build != "npm build" {
-		t.Errorf(`srvCfg.Build = %q, %v, want match for "npm build"`, srvCfg.Base, srvCfg)
+	if srvCfg.Start != "npm run start" {
+		t.Errorf(`srvCfg.Start = %q, %v, want match for "npm run start"`, srvCfg.Base, srvCfg)
+		return
+	}
+}
+
+func TestBuildProject(t *testing.T) {
+	prPath, err := getPR()
+	if err != nil {
+		t.Error(err)
 		return
 	}
 
-	if srvCfg.Start != "npm start" {
-		t.Errorf(`srvCfg.Start = %q, %v, want match for "npm start"`, srvCfg.Base, srvCfg)
+	vetoPrConfig, err := readProjectConfig(path.Join(prPath, "vetopr.yaml"))
+	if err != nil {
+		t.Errorf("readProjectConfig: %+v", err)
+		return
+	}
+
+	apiCfg, err := getServiceCfg("api", vetoPrConfig)
+	if err != nil {
+		t.Errorf(`vgetServiceCfg("api", vetoPrConfig) =  %v`, err)
+		return
+	}
+
+	buildFolderPath := path.Join(prPath, apiCfg.Base, "dist")
+	if err := os.RemoveAll(buildFolderPath); err != nil {
+		t.Errorf(`os.RemoveAll(path.Join(prPath, apiCfg.Base, "dist")) =  %v`, err)
+		return
+	}
+
+	if err := buildProject(prPath, apiCfg); err != nil {
+		t.Errorf(`buildProject(prPath, apiCfg) =  %v`, err)
+		return
+	}
+
+	if _, err := os.Stat(buildFolderPath); err != nil {
+		t.Errorf(`os.Stat(buildFolderPath) =  %v`, err)
 		return
 	}
 }
