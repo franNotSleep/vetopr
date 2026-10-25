@@ -10,10 +10,19 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
+func errServiceNotFound(key ...string) error {
+	if len(key) == 0 {
+		return fmt.Errorf("Service not found\n")
+	}
+	return fmt.Errorf("Service with key \"%s\" was not found\n", key[0])
+}
+
 type ServiceConfig struct {
-	Base  string `yaml:"base"`
-	Build string `yaml:"build"`
-	Start string `yaml:"start"`
+	Base     string `yaml:"base"`
+	Build    string `yaml:"build"`
+	Start    string `yaml:"start"`
+	Workpath string
+	Name     string
 }
 
 // type VetoprConfig map[any]any
@@ -21,17 +30,89 @@ type VetoprConfig struct {
 	Services map[any]ServiceConfig `yaml:"services"`
 }
 
-func handle(workPath string) error {
-	cfg, err := readProjectConfig(workPath + "/vetopr.yaml")
-	if err != nil {
-		return err
+type VetoprD struct {
+	Services []*VetoprService
+	Workpath string
+}
+
+func NewVetoprD(workpath string) *VetoprD {
+	return &VetoprD{Services: []*VetoprService{}, Workpath: workpath}
+}
+
+func (vd *VetoprD) AddService(cfg ServiceConfig) *VetoprService {
+	if cfg.Workpath == "" {
+		cfg.Workpath = vd.Workpath
 	}
 
-	fmt.Printf("CFG: %+v\n", cfg)
+	return &VetoprService{PID: nil, Config: cfg}
+}
+
+func (vd *VetoprD) Run(serviceKey string) (int, error) {
+	s := vd.FindService(serviceKey)
+	if s == nil {
+		return 0, errServiceNotFound(serviceKey)
+	}
+
+	fmt.Printf("Building project %s...\n", s.Config.Name)
+	if err := s.build(); err != nil {
+		return 0, err
+	}
+
+	return s.start()
+}
+
+func (vd *VetoprD) FindService(serviceKey string) *VetoprService {
+	for _, s := range vd.Services {
+		if s.Config.Name == serviceKey {
+			return s
+		}
+	}
 	return nil
 }
 
-// 1. read the config on how to turn each project
+type VetoprService struct {
+	PID    *int
+	Config ServiceConfig
+}
+
+func (vs *VetoprService) start() (int, error) {
+	workPath := path.Join(vs.Config.Workpath, vs.Config.Base)
+
+	cmd := exec.Command("/bin/sh", "-c", vs.Config.Start)
+	cmd.Dir = workPath
+	cmd.Start()
+
+	pid, err := startCmd(cmd)
+	if err != nil {
+		return 0, fmt.Errorf("startCmd(cmd) = %v", err)
+	}
+
+	if err = cmd.Wait(); err != nil {
+		return 0, fmt.Errorf("cmd.Wait() = %v", err)
+	}
+
+	vs.PID = &pid
+	return pid, err
+}
+
+func (vs *VetoprService) build() error {
+	workPath := path.Join(vs.Config.Workpath, vs.Config.Base)
+
+	cmd := exec.Command("/bin/sh", "-c", vs.Config.Build)
+	cmd.Dir = workPath
+
+	_, err := startCmd(cmd)
+	if err != nil {
+		return fmt.Errorf("startCmd(cmd) = %v", err)
+	}
+
+	if err = cmd.Wait(); err != nil {
+		return fmt.Errorf("cmd.Wait() = %v", err)
+	}
+
+	return nil
+}
+
 func readProjectConfig(path string) (VetoprConfig, error) {
 	f, err := os.Open(path)
 	var cfg VetoprConfig
@@ -47,102 +128,53 @@ func readProjectConfig(path string) (VetoprConfig, error) {
 		return cfg, err
 	}
 
+	for k, v := range cfg.Services {
+		name, ok := k.(string)
+		if ok {
+			v.Name = name
+			cfg.Services[k] = v
+		}
+	}
+
 	return cfg, nil
 }
 
-// 2. build project
-func buildProject(workPath string, serviceCfg ServiceConfig) error {
-
-	workPath = path.Join(workPath, serviceCfg.Base)
-
-	cmd := exec.Command("/bin/sh", "-c", serviceCfg.Build)
-	cmd.Dir = workPath
-
-	err := startCmd(cmd)
+func handle(workPath string) error {
+	cfg, err := readProjectConfig(workPath + "/vetopr.yaml")
 	if err != nil {
-		return fmt.Errorf("startCmd(cmd) = %v", err)
+		return err
 	}
 
-	//	readerErr, err := cmd.StderrPipe()
-	//	if err != nil {
-	//		return fmt.Errorf("cmd.StderrPipe() = %v", err)
-	//	}
-	//
-	//	err = cmd.Start()
-	//	if err != nil {
-	//		return fmt.Errorf("cmd.Start() = %v", err)
-	//	}
-	//
-	//	_, err = io.Copy(os.Stdout, reader)
-	//	if err != nil {
-	//		return fmt.Errorf("io.Copy(os.Stdin, reader) = %v", err)
-	//	}
-	//
-	//	_, err = io.Copy(os.Stdout, reader)
-	//	if err != nil {
-	//		return fmt.Errorf("io.Copy(os.Stdin, reader) = %v", err)
-	//	}
-
-	if err = cmd.Wait(); err != nil {
-		return fmt.Errorf("cmd.Wait() = %v", err)
-	}
-
+	fmt.Printf("CFG: %+v\n", cfg)
 	return nil
 }
 
-func ls(workpath string) (string, error) {
-	cmd := exec.Command("ls")
-	cmd.Dir = workpath
-	output, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", err
-	}
-	if err := cmd.Start(); err != nil {
-		return "", err
-	}
-
-	buf := make([]byte, 4096)
-	_, err = output.Read(buf)
-	if err != nil {
-		return "", err
-	}
-
-	if err := cmd.Wait(); err != nil {
-		return "", err
-	}
-
-	return string(buf), nil
-}
-
-// 3. turn project
-func startProject() {
-
-}
-
-func startCmd(cmd *exec.Cmd) error {
+func startCmd(cmd *exec.Cmd) (int, error) {
 	reader, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("cmd.StdoutPipe() = %v", err)
+		return 0, fmt.Errorf("cmd.StdoutPipe() = %v", err)
 	}
 
 	readerErr, err := cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("cmd.StderrPipe() = %v", err)
+		return 0, fmt.Errorf("cmd.StderrPipe() = %v", err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("cmd.Start() = %v", err)
+		return 0, fmt.Errorf("cmd.Start() = %v", err)
 	}
 
-	_, err = io.Copy(os.Stdout, reader)
-	if err != nil {
-		return fmt.Errorf("io.Copy(os.Stdin, reader) = %v", err)
-	}
+	go func(reader io.Reader, readerErr io.Reader) {
+		_, err = io.Copy(os.Stdout, reader)
+		if err != nil {
+			fmt.Printf("io.Copy(os.Stdin, reader) = %v", err)
+		}
 
-	_, err = io.Copy(os.Stderr, readerErr)
-	if err != nil {
-		return fmt.Errorf("io.Copy(os.Stderr, readerErr) = %v", err)
-	}
+		_, err = io.Copy(os.Stderr, readerErr)
+		if err != nil {
+			fmt.Printf("io.Copy(os.Stderr, readerErr) = %v", err)
+		}
+	}(reader, readerErr)
 
-	return nil
+	return cmd.Process.Pid, nil
 }

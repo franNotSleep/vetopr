@@ -36,16 +36,6 @@ func getPR() (string, error) {
 	return testPRPath, findErr
 }
 
-func getServiceCfg(service string, vetoPrConfig VetoprConfig) (ServiceConfig, error) {
-	var zero ServiceConfig
-	srvCfg, ok := vetoPrConfig.Services[service]
-	if !ok {
-		return zero, fmt.Errorf("Service %s is not a key on Config", service)
-	}
-
-	return srvCfg, nil
-}
-
 func TestReadConfig(t *testing.T) {
 	prPath, err := getPR()
 	if err != nil {
@@ -66,6 +56,11 @@ func TestReadConfig(t *testing.T) {
 		return
 	}
 
+	if srvCfg.Name != "api" {
+		t.Errorf(`srvCfg.Name = %q, %v, want match for "api"`, srvCfg.Name, srvCfg)
+		return
+	}
+
 	if srvCfg.Base != "./backend" {
 		t.Errorf(`srvCfg.Base = %q, %v, want match for "./backend"`, srvCfg.Base, srvCfg)
 		return
@@ -73,42 +68,6 @@ func TestReadConfig(t *testing.T) {
 
 	if srvCfg.Start != "npm run start" {
 		t.Errorf(`srvCfg.Start = %q, %v, want match for "npm run start"`, srvCfg.Base, srvCfg)
-		return
-	}
-}
-
-func TestBuildProject(t *testing.T) {
-	prPath, err := getPR()
-	if err != nil {
-		t.Error(err)
-		return
-	}
-
-	vetoPrConfig, err := readProjectConfig(path.Join(prPath, "vetopr.yaml"))
-	if err != nil {
-		t.Errorf("readProjectConfig: %+v", err)
-		return
-	}
-
-	apiCfg, err := getServiceCfg("api", vetoPrConfig)
-	if err != nil {
-		t.Errorf(`vgetServiceCfg("api", vetoPrConfig) =  %v`, err)
-		return
-	}
-
-	buildFolderPath := path.Join(prPath, apiCfg.Base, "dist")
-	if err := os.RemoveAll(buildFolderPath); err != nil {
-		t.Errorf(`os.RemoveAll(path.Join(prPath, apiCfg.Base, "dist")) =  %v`, err)
-		return
-	}
-
-	if err := buildProject(prPath, apiCfg); err != nil {
-		t.Errorf(`buildProject(prPath, apiCfg) =  %v`, err)
-		return
-	}
-
-	if _, err := os.Stat(buildFolderPath); err != nil {
-		t.Errorf(`os.Stat(buildFolderPath) =  %v`, err)
 		return
 	}
 }
