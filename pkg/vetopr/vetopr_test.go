@@ -70,6 +70,18 @@ func TestReadConfig(t *testing.T) {
 		t.Errorf(`srvCfg.Start = %q, %v, want match for "npm run start"`, srvCfg.Base, srvCfg)
 		return
 	}
+
+	want := 1
+	if len(vetoPrConfig.Databases) == 0 {
+		t.Errorf(`vetoPrConfig.Databases = %d, %d, expected match '%d'`, 0, want, want)
+		return
+	}
+
+	db := vetoPrConfig.Databases[0]
+	if db.Name != "main-db" {
+		t.Errorf(`db.Name = %s, expected match '%s'`, db.Name, "main-db")
+		return
+	}
 }
 
 func TestRunService(t *testing.T) {
@@ -88,8 +100,7 @@ func TestRunService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Fatal(vd.Stop("api"))
-}
-
-func TestRunServices(t *testing.T) {
+	if err := vd.Stop("api"); err != nil {
+		t.Fatal(err)
+	}
 }

@@ -25,9 +25,14 @@ type ServiceConfig struct {
 	Name     string
 }
 
+type DatabaseConfig struct {
+	Name string `yaml:"name"`
+}
+
 // type VetoprConfig map[any]any
 type VetoprConfig struct {
-	Services map[any]ServiceConfig `yaml:"services"`
+	Services  map[any]ServiceConfig `yaml:"services"`
+	Databases []DatabaseConfig      `yaml:"databases"`
 }
 
 type VetoprD struct {
@@ -41,8 +46,6 @@ func NewVetoprD(workpath string, configPath string) (*VetoprD, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	fmt.Printf("Config: %+v\n", cfg)
 
 	vd := &VetoprD{Services: []*VetoprService{}, Workpath: workpath}
 	for _, v := range cfg.Services {
@@ -83,6 +86,7 @@ func (vd *VetoprD) Run(serviceKey string) (*os.Process, error) {
 		return nil, err
 	}
 
+	fmt.Printf("Starting project %s...\n", s.Config.Name)
 	return s.start()
 }
 
@@ -92,6 +96,7 @@ func (vd *VetoprD) Stop(serviceKey string) error {
 		return errServiceNotFound(serviceKey)
 	}
 
+	fmt.Printf("Stoppping %s service\n", serviceKey)
 	return s.Process.Kill()
 }
 
@@ -120,10 +125,6 @@ func (vs *VetoprService) start() (*os.Process, error) {
 	p, err := vs.startCmd(cmd, false)
 	if err != nil {
 		return nil, fmt.Errorf("startCmd(cmd) = %v", err)
-	}
-
-	if err = cmd.Wait(); err != nil {
-		return nil, fmt.Errorf("cmd.Wait() = %v", err)
 	}
 
 	go func() {
@@ -156,10 +157,6 @@ func (vs *VetoprService) build() error {
 	_, err := vs.startCmd(cmd, true)
 	if err != nil {
 		return fmt.Errorf("startCmd(cmd) = %v", err)
-	}
-
-	if err = cmd.Wait(); err != nil {
-		return fmt.Errorf("cmd.Wait() = %v", err)
 	}
 
 	return nil
@@ -209,7 +206,12 @@ func (vs *VetoprService) startCmd(cmd *exec.Cmd, wait bool) (*os.Process, error)
 	}
 
 	if wait {
-		return cmd.Process, cmd.Wait()
+		err := cmd.Wait()
+		if err != nil {
+			return nil, fmt.Errorf("cmd.Wait() = %v", err)
+		}
+
+		return cmd.Process, nil
 	}
 
 	return cmd.Process, nil
