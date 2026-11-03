@@ -71,3 +71,25 @@ func TestReadConfig(t *testing.T) {
 		return
 	}
 }
+
+func TestRunService(t *testing.T) {
+	prPath, err := getPR()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	vd, err := NewVetoprD(prPath, path.Join(prPath, "vetopr.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := vd.Run("api"); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Fatal(vd.Stop("api"))
+}
+
+func TestRunServices(t *testing.T) {
+}
