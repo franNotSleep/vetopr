@@ -3,6 +3,8 @@ package vetopr
 import (
 	"io"
 	"os"
+
+	"github.com/moby/moby/client"
 )
 
 type ServiceType int
@@ -31,20 +33,18 @@ type ServiceConfig struct {
 	Name     string
 }
 
-type DatabaseConfig struct {
-	Name string `yaml:"name"`
-}
-
 // type VetoprConfig map[any]any
 type VetoprConfig struct {
 	Services  map[any]ServiceConfig `yaml:"services"`
-	Databases []DatabaseConfig      `yaml:"databases"`
+	Databases []ServiceConfig       `yaml:"databases"`
 }
 
 type VetoprD struct {
-	Services []*VetoprService
-	Workpath string
-	Config   VetoprConfig
+	Services     []*VetoprService
+	Workpath     string
+	Config       VetoprConfig
+	dockerClient *client.Client
+	boxID        string
 }
 
 type VetoprService struct {
@@ -52,4 +52,5 @@ type VetoprService struct {
 	Config     ServiceConfig
 	StdoutRead *io.ReadCloser
 	StderrRead *io.ReadCloser
+	Type       ServiceType
 }

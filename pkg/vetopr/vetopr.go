@@ -1,13 +1,16 @@
 package vetopr
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path"
+	"time"
 
 	"github.com/goccy/go-yaml"
+	"github.com/moby/moby/client"
 )
 
 func errServiceNotFound(key ...string) error {
@@ -17,31 +20,12 @@ func errServiceNotFound(key ...string) error {
 	return fmt.Errorf("Service with key \"%s\" was not found\n", key[0])
 }
 
-type ServiceConfig struct {
-	Base     string `yaml:"base"`
-	Build    string `yaml:"build"`
-	Start    string `yaml:"start"`
-	Workpath string
-	Name     string
-}
-
-type DatabaseConfig struct {
-	Name string `yaml:"name"`
-}
-
-// type VetoprConfig map[any]any
-type VetoprConfig struct {
-	Services  map[any]ServiceConfig `yaml:"services"`
-	Databases []DatabaseConfig      `yaml:"databases"`
-}
-
-type VetoprD struct {
-	Services []*VetoprService
-	Workpath string
-	Config   VetoprConfig
-}
-
 func NewVetoprD(workpath string, configPath string) (*VetoprD, error) {
+	dockerClient, err := client.New(client.FromEnv)
+	if err != nil {
+		return nil, err
+	}
+
 	cfg, err := readProjectConfig(configPath)
 	if err != nil {
 		return nil, err
@@ -49,20 +33,36 @@ func NewVetoprD(workpath string, configPath string) (*VetoprD, error) {
 
 	vd := &VetoprD{Services: []*VetoprService{}, Workpath: workpath}
 	for _, v := range cfg.Services {
-		vd.addService(v)
+		if v.Workpath == "" {
+			v.Workpath = vd.Workpath
+		}
+
+		vs := &VetoprService{Process: nil, Config: v, Type: UserType}
+		vd.Services = append(vd.Services, vs)
 	}
+
+	for _, v := range cfg.Databases {
+		vs := &VetoprService{Process: nil, Config: v, Type: DatabaseType}
+		vd.Services = append(vd.Services, vs)
+	}
+
+	vd.dockerClient = dockerClient
 
 	return vd, nil
 }
 
-func (vd *VetoprD) addService(cfg ServiceConfig) *VetoprService {
-	if cfg.Workpath == "" {
-		cfg.Workpath = vd.Workpath
-	}
+func (vd *VetoprD) startBox() error {
+	dclient := vd.dockerClient
+	c, err := dclient.ContainerCreate(context.Background(), client.ContainerCreateOptions{
+		Image: "alpine:3.14",
+		Name:  fmt.Sprintf("vetopr-%s", time.Now().UnixMilli()),
+	})
 
-	vs := &VetoprService{Process: nil, Config: cfg}
-	vd.Services = append(vd.Services, vs)
-	return vs
+	if err != nil {
+		return err
+	}
+	vd.boxID = c.ID
+	return nil
 }
 
 func (vd *VetoprD) RunAll() error {
@@ -81,12 +81,6 @@ func (vd *VetoprD) Run(serviceKey string) (*os.Process, error) {
 		return nil, errServiceNotFound(serviceKey)
 	}
 
-	fmt.Printf("Building project %s...\n", s.Config.Name)
-	if err := s.build(); err != nil {
-		return nil, err
-	}
-
-	fmt.Printf("Starting project %s...\n", s.Config.Name)
 	return s.start()
 }
 
@@ -107,45 +101,6 @@ func (vd *VetoprD) FindService(serviceKey string) *VetoprService {
 		}
 	}
 	return nil
-}
-
-type VetoprService struct {
-	Process    *os.Process
-	Config     ServiceConfig
-	StdoutRead *io.ReadCloser
-	StderrRead *io.ReadCloser
-}
-
-func (vs *VetoprService) start() (*os.Process, error) {
-	workPath := path.Join(vs.Config.Workpath, vs.Config.Base)
-
-	cmd := exec.Command("/bin/sh", "-c", vs.Config.Start)
-	cmd.Dir = workPath
-
-	p, err := vs.startCmd(cmd, false)
-	if err != nil {
-		return nil, fmt.Errorf("startCmd(cmd) = %v", err)
-	}
-
-	go func() {
-		reader := *vs.StdoutRead
-		readerErr := *vs.StderrRead
-
-		_, err = io.Copy(os.Stdout, reader)
-		if err != nil {
-			fmt.Printf("io.Copy(os.Stdin, reader) = %v", err)
-		}
-		defer reader.Close()
-
-		_, err = io.Copy(os.Stderr, readerErr)
-		if err != nil {
-			fmt.Printf("io.Copy(os.Stderr, readerErr) = %v", err)
-		}
-		defer readerErr.Close()
-	}()
-
-	vs.Process = p
-	return p, err
 }
 
 func (vs *VetoprService) build() error {
