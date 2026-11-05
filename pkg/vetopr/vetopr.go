@@ -37,12 +37,34 @@ func NewVetoprD(workpath string, configPath string) (*VetoprD, error) {
 			v.Workpath = vd.Workpath
 		}
 
-		vs := &VetoprService{Process: nil, Config: v, Type: UserType}
+		workpath := path.Join(v.Workpath, v.Base)
+
+		buildCommand := exec.Command("/bin/sh", "-c", v.Build)
+		buildCommand.Dir = workpath
+
+		startCommand := exec.Command("/bin/sh", "-c", v.Start)
+		startCommand.Dir = workpath
+
+		vs := &VetoprService{
+			Process: nil,
+			Name:    v.Name,
+			Type:    UserType,
+			Cmds: []*VetoprServiceCommand{
+				&VetoprServiceCommand{
+					cmd: buildCommand,
+					id:  "build",
+				},
+				&VetoprServiceCommand{
+					cmd: startCommand,
+					id:  "start",
+				},
+			}}
+
 		vd.Services = append(vd.Services, vs)
 	}
 
 	for _, v := range cfg.Databases {
-		vs := &VetoprService{Process: nil, Config: v, Type: DatabaseType}
+		vs := &VetoprService{Process: nil, Name: v.Name, Workpath: "", Type: DatabaseType}
 		vd.Services = append(vd.Services, vs)
 	}
 
@@ -67,7 +89,7 @@ func (vd *VetoprD) startBox() error {
 
 func (vd *VetoprD) RunAll() error {
 	for _, v := range vd.Services {
-		_, err := vd.Run(v.Config.Name)
+		_, err := vd.Run(v.Name)
 		if err != nil {
 			return err
 		}
@@ -96,7 +118,7 @@ func (vd *VetoprD) Stop(serviceKey string) error {
 
 func (vd *VetoprD) FindService(serviceKey string) *VetoprService {
 	for _, s := range vd.Services {
-		if s.Config.Name == serviceKey {
+		if s.Name == serviceKey {
 			return s
 		}
 	}
@@ -104,10 +126,8 @@ func (vd *VetoprD) FindService(serviceKey string) *VetoprService {
 }
 
 func (vs *VetoprService) build() error {
-	workPath := path.Join(vs.Config.Workpath, vs.Config.Base)
-
 	cmd := exec.Command("/bin/sh", "-c", vs.Config.Build)
-	cmd.Dir = workPath
+	cmd.Dir = vs.Workpath
 
 	_, err := vs.startCmd(cmd, true)
 	if err != nil {

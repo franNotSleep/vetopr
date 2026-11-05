@@ -3,6 +3,7 @@ package vetopr
 import (
 	"io"
 	"os"
+	"os/exec"
 
 	"github.com/moby/moby/client"
 )
@@ -47,9 +48,16 @@ type VetoprD struct {
 	boxID        string
 }
 
+type VetoprServiceCommand struct {
+	cmd *exec.Cmd
+	id  string
+}
+
 type VetoprService struct {
 	Process    *os.Process
-	Config     ServiceConfig
+	Name       string
+	Cmds       []*VetoprServiceCommand
+	Workpath   string
 	StdoutRead *io.ReadCloser
 	StderrRead *io.ReadCloser
 	Type       ServiceType
