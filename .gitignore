@@ -1,0 +1,5 @@
+snapshot/
+snapshots/
+.env*
+go.sum
+pkg/vm/artifacts
