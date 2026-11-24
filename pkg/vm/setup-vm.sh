@@ -1,5 +1,4 @@
 #! /usr/bin/bash
-
 VETOPR_HOME="$HOME/vetopr"
 FIRECRACKER_BIN="$VETOPR_HOME/bin/firecracker"
 API_SOCKET="/tmp/firecracker-$1.socket"
@@ -12,6 +11,19 @@ KERNEL="./$(ls ./artifacts/vmlinux* | tail -1)"
 KERNEL_BOOT_ARGS="console=ttyS0 reboot=k panic=1"
 ROOTFS="./$(ls ./artifacts/*.ext4 | tail -1)"
 KEY_NAME=./$(ls ./artifacts/*.id_rsa | tail -1)
+
+
+echo "Running directory: $PWD"
+
+if  [ ! -f $KERNEL ]; then
+  echo "Kernel file is required"
+  exit 1
+fi
+
+if  [ ! -f $ROOTFS ]; then
+  echo "filesystem file is required"
+  exit 1
+fi
 
 # 1. check if firecracker is installed
 if ! command -v firecracker > /dev/null 2>&1
@@ -60,12 +72,10 @@ if [ $? -ne 0 ]; then
   exit
 fi
 
-sudo ip tuntap add $TAP mode tap
-
 echo "Assigning the TAP IP $TAP_IP and start up the device"
 sudo ip addr add $TAP_IP/30 dev $TAP
-sudo ip link set $TAP up
 
+sudo ip link set $TAP up
 echo "Enabling IPv4 forwarding on the system"
 sudo sysctl -w net.ipv4.ip_forward=1
 
@@ -81,11 +91,9 @@ if ! sudo nft list tables | grep -q "firecracker"; then
   sudo iptables-nft -t nat -A POSTROUTING -o $HOST_IFACE -s $GUEST_IP -j MASQUERADE
   sudo iptables-nft -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
   sudo iptables-nft -A FORWARD -i $TAP -o $HOST_IFACE -j ACCEPT
+
 fi
 
-sudo iptables-nft -t nat -A POSTROUTING -o $HOST_IFACE -s $GUEST_IP -j MASQUERADE
-sudo iptables-nft -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-sudo iptables-nft -A FORWARD -i $TAP -o $HOST_IFACE -j ACCEPT
 
 sudo curl -X PUT --unix-socket "${API_SOCKET}" \
     --data "{
@@ -103,7 +111,7 @@ sudo curl -X PUT --unix-socket "${API_SOCKET}" \
     }" \
     "http://localhost/drives/rootfs"
 
-curl --unix-socket /tmp/firecracker.socket -i \
+curl --unix-socket "${API_SOCKET}" -i \
   -X PUT 'http://localhost/network-interfaces/net1' \
   -H 'Accept: application/json' \
   -H 'Content-Type: application/json' \
