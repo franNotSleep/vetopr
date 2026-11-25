@@ -8,7 +8,7 @@ GUEST_IP=$4
 HOST_IFACE=$(ip -j route list default | jq -r '.[0].dev')
 MAC=$5
 KERNEL="./$(ls ./artifacts/vmlinux* | tail -1)"
-KERNEL_BOOT_ARGS="console=ttyS0 reboot=k panic=1"
+KERNEL_BOOT_ARGS="console=ttyS0 reboot=k panic=1 ip=$GUEST_IP::$TAP_IP:255.255.255.252::eth0:off"
 ROOTFS="./$(ls ./artifacts/*.ext4 | tail -1)"
 KEY_NAME=./$(ls ./artifacts/*.id_rsa | tail -1)
 
@@ -62,45 +62,43 @@ echo "Setting network..."
 
 echo "Creating tap device $TAP"
 sudo ip link del "$TAP" 2> /dev/null || true
-if [ $? -ne 0 ]; then
-  echo "unable to delete $TAP"
-  exit
-fi
 sudo ip tuntap add $TAP mode tap user "$(id -u)" group "$(id -g)"
-if [ $? -ne 0 ]; then
-  echo sudo ip tuntap add $TAP mode tap user "$(id -u)" group "$(id -g)"
-  exit
-fi
-
 echo "Assigning the TAP IP $TAP_IP and start up the device"
 sudo ip addr add $TAP_IP/30 dev $TAP
-
 sudo ip link set $TAP up
 echo "Enabling IPv4 forwarding on the system"
 sudo sysctl -w net.ipv4.ip_forward=1
 
-echo "Setting up nftables & chains & rules"
 
 if ! sudo nft list tables | grep -q "firecracker"; then
+  echo "Setting up tables & chains"
   sudo nft add table firecracker
   sudo nft 'add chain firecracker postrouting { type nat hook postrouting priority srcnat; policy accept; }'
   sudo nft 'add chain firecracker filter { type filter hook forward priority filter; policy accept; }'
-  sudo nft add rule firecracker postrouting ip saddr $GUEST_IP oifname $HOST_IFACE counter masquerade
-  sudo nft add rule firecracker filter iifname $TAP oifname $HOST_IFACE accept
-
-  sudo iptables-nft -t nat -A POSTROUTING -o $HOST_IFACE -s $GUEST_IP -j MASQUERADE
-  sudo iptables-nft -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-  sudo iptables-nft -A FORWARD -i $TAP -o $HOST_IFACE -j ACCEPT
-
 fi
 
+echo "Setting up rules"
+sudo nft add rule firecracker postrouting ip saddr $GUEST_IP oifname $HOST_IFACE counter masquerade
+sudo nft add rule firecracker filter iifname $TAP oifname $HOST_IFACE accept
 
+sudo iptables-nft -t nat -A POSTROUTING -o eth0 -s $GUEST_IP -j MASQUERADE
+sudo iptables-nft -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+sudo iptables-nft -A FORWARD -i $TAP -o $HOST_IFACE -j ACCEPT
+
+echo "Setting up boot source"
 sudo curl -X PUT --unix-socket "${API_SOCKET}" \
     --data "{
         \"kernel_image_path\": \"${KERNEL}\",
         \"boot_args\": \"${KERNEL_BOOT_ARGS}\"
     }" \
     "http://localhost/boot-source"
+if [ $? -ne 0 ]; then
+  exit 1
+fi
+if [ $? -ne 0 ]; then
+  echo "SETTING FILESYSTEM"
+  exit 1
+fi
 
 sudo curl -X PUT --unix-socket "${API_SOCKET}" \
     --data "{
@@ -110,6 +108,10 @@ sudo curl -X PUT --unix-socket "${API_SOCKET}" \
         \"is_read_only\": false
     }" \
     "http://localhost/drives/rootfs"
+if [ $? -ne 0 ]; then
+  echo "SETTING FILESYSTEM"
+  exit 1
+fi
 
 curl --unix-socket "${API_SOCKET}" -i \
   -X PUT 'http://localhost/network-interfaces/net1' \
@@ -121,6 +123,7 @@ curl --unix-socket "${API_SOCKET}" -i \
       \"host_dev_name\": \"$TAP\"
     }"
 
+
 sleep 0.015s
 
 sudo curl -X PUT --unix-socket "${API_SOCKET}" \
@@ -128,16 +131,7 @@ sudo curl -X PUT --unix-socket "${API_SOCKET}" \
         \"action_type\": \"InstanceStart\"
     }" \
     "http://localhost/actions"
-
-sleep 2s
-
-# Setup internet access in the guest
-ssh -i $KEY_NAME root@$GUEST_IP  "ip route add default via 172.16.0.1 dev eth0"
-
-# Setup DNS resolution in the guest
-ssh -i $KEY_NAME root@$GUEST_IP  "echo 'nameserver 8.8.8.8' > /etc/resolv.conf"
-
-# glibc resolves A/AAAA in parallel; on an IPv6-connected host the AAAA query
-# can stall on host NAT, adding seconds per lookup.
-ssh -i $KEY_NAME root@$GUEST_IP  "echo 'options single-request-reopen' >> /etc/resolv.conf"
-
+if [ $? -ne 0 ]; then
+  echo "SETTING FILESYSTEM"
+  exit 1
+fi
